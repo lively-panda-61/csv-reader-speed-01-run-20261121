@@ -7,7 +7,8 @@
 //
 // run() returns each answer already as a JSON string (solve.js emits JSON
 // while it parses, so there is no object tree and no JSON.stringify pass):
-// the answers are joined into the array directly.
+// the answers are appended to one rope, which the write flattens once — no
+// join pass copies the whole answers array first.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -31,16 +32,18 @@ const cases = JSON.parse(readFileSync(join(INPUT_DIR, 'cases.json'), 'utf8')) as
   id: string;
   input: unknown;
 }[];
-const answers: string[] = [];
+let out = '[';
 let chars = 0;
-for (const c of cases) {
-  answers.push(run(c.input));
-  const text = (c.input as { text?: unknown }).text;
+for (let i = 0; i < cases.length; i++) {
+  if (i > 0) out += ',';
+  out += run(cases[i].input);
+  const text = (cases[i].input as { text?: unknown }).text;
   if (typeof text === 'string') chars += text.length;
 }
+out += ']';
 const outFile = join(OUTPUT_DIR, 'answers.json');
-writeFileSync(outFile, '[' + answers.join(',') + ']');
+writeFileSync(outFile, out);
 console.log(
-  `[csv-reader-speed] ${cases.length} cases, ${chars.toLocaleString('en-US')} chars read, ` +
+  `[csv-reader-speed] ${cases.length} cases, ${chars} chars read, ` +
     `answers written to ${outFile} in ${Date.now() - started} ms`,
 );

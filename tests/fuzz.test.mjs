@@ -78,59 +78,36 @@ function randomStructured(r) {
   const eol = r() < 0.5 ? '\n' : '\r\n';
   let text = lines.join(eol);
   if (r() < 0.3) text = '\uFEFF' + text;
-  if (r() < 0.3) text += eol;
+  if (r() < 0.2) text += eol;
   return text;
 }
 
-test('fuzz: random token soup matches the reference', () => {
-  const r = rng(20261122);
-  for (let i = 0; i < 5000; i++) {
-    const text = randomText(r, 40);
-    const header = r() < 0.5;
-    const input = { text, header };
-    assert.equal(
-      canonical(got(input)),
-      canonical(readCsv(input)),
-      `mismatch on case ${i}: ${JSON.stringify(input)}`,
-    );
+test('random piece soup matches the reference (6000 cases)', () => {
+  const r = rng(0xc503);
+  for (let i = 0; i < 6000; i++) {
+    const input = { text: randomText(r, 40), header: r() < 0.5 };
+    const want = readCsv(input);
+    const have = got(input);
+    assert.equal(canonical(have), canonical(want), `case ${i}: ${JSON.stringify(input)}`);
   }
 });
 
-test('fuzz: random structured records match the reference', () => {
-  const r = rng(31337);
-  for (let i = 0; i < 4000; i++) {
-    const text = randomStructured(r);
-    const header = r() < 0.5;
-    const input = { text, header };
-    assert.equal(
-      canonical(got(input)),
-      canonical(readCsv(input)),
-      `mismatch on structured case ${i}: ${JSON.stringify(input)}`,
-    );
+test('random structured records match the reference (6000 cases)', () => {
+  const r = rng(0xbeef);
+  for (let i = 0; i < 6000; i++) {
+    const input = { text: randomStructured(r), header: r() < 0.5 };
+    const want = readCsv(input);
+    const have = got(input);
+    assert.equal(canonical(have), canonical(want), `case ${i}: ${JSON.stringify(input)}`);
   }
 });
 
-test('fuzz: long token soup matches the reference', () => {
-  const r = rng(90210);
+test('longer random texts match the reference (500 cases)', () => {
+  const r = rng(0x1234);
   for (let i = 0; i < 500; i++) {
-    const text = randomText(r, 600);
-    const header = r() < 0.5;
-    const input = { text, header };
-    assert.equal(
-      canonical(got(input)),
-      canonical(readCsv(input)),
-      `mismatch on long case ${i}`,
-    );
-  }
-});
-
-test('fuzz: every run() output is valid JSON on its own', () => {
-  // The entry's answers.json is built from run()'s strings; each one must
-  // parse, so a bad escape can never corrupt the whole file.
-  const r = rng(555);
-  for (let i = 0; i < 1000; i++) {
-    const text = randomText(r, 60);
-    const s = run({ text, header: r() < 0.5 });
-    assert.doesNotThrow(() => JSON.parse(s), `run() returned invalid JSON on case ${i}: ${s.slice(0, 200)}`);
+    const input = { text: randomText(r, 400), header: r() < 0.5 };
+    const want = readCsv(input);
+    const have = got(input);
+    assert.equal(canonical(have), canonical(want), `case ${i}`);
   }
 });

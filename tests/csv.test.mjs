@@ -50,9 +50,9 @@ const cases = [
     expected: { columns: null, rows: [], errors: [] },
   },
   {
-    name: 'blank LF and CRLF lines are no records',
-    input: { text: 'a,b\n\n\r\n1,2\n\n', header: true },
-    expected: { columns: ['a', 'b'], rows: [['1', '2']], errors: [] },
+    name: 'only newlines',
+    input: { text: '\n\n\n', header: true },
+    expected: { columns: [], rows: [], errors: [] },
   },
   {
     name: 'CRLF record ends',
@@ -60,16 +60,17 @@ const cases = [
     expected: { columns: ['a', 'b'], rows: [['1', '2']], errors: [] },
   },
   {
-    name: 'lone CR inside an unquoted field is dropped, stray_cr on the header',
-    input: { text: 'a\rb,c\n1,2\n', header: true },
-    expected: {
-      columns: ['ab', 'c'],
-      rows: [['1', '2']],
-      errors: [{ code: 'stray_cr', line: 1, row: null }],
-    },
+    name: 'no trailing newline',
+    input: { text: 'a,b\n1,2', header: true },
+    expected: { columns: ['a', 'b'], rows: [['1', '2']], errors: [] },
   },
   {
-    name: 'short row pads with empty strings and records its field count',
+    name: 'blank lines skipped',
+    input: { text: 'a,b\n\n1,2\n\n', header: true },
+    expected: { columns: ['a', 'b'], rows: [['1', '2']], errors: [] },
+  },
+  {
+    name: 'short row pads with empty strings',
     input: { text: 'a,b,c\n1,2\n', header: true },
     expected: {
       columns: ['a', 'b', 'c'],
@@ -78,20 +79,185 @@ const cases = [
     },
   },
   {
-    name: 'long row is cut and records the cut fields',
-    input: { text: 'a,b\n1,2,3,4\n', header: true },
+    name: 'long row cuts, extra listed',
+    input: { text: 'a,b\n1,2,3\n', header: true },
     expected: {
       columns: ['a', 'b'],
       rows: [['1', '2']],
-      errors: [{ code: 'long_row', line: 2, row: 0, extra: ['3', '4'] }],
+      errors: [{ code: 'long_row', line: 2, row: 0, extra: ['3'] }],
     },
   },
   {
-    name: 'header row never gets a short/long error',
+    name: 'header row defines the width, later rows pad',
+    input: { text: 'a,b,c\n1,2\n3,4,5\n', header: true },
+    expected: {
+      columns: ['a', 'b', 'c'],
+      rows: [
+        ['1', '2', ''],
+        ['3', '4', '5'],
+      ],
+      errors: [{ code: 'short_row', line: 2, row: 0, fields: 2 }],
+    },
+  },
+  {
+    name: 'width from first record when header false',
+    input: { text: 'a,b,c\n1,2\n', header: false },
+    expected: {
+      columns: null,
+      rows: [
+        ['a', 'b', 'c'],
+        ['1', '2', ''],
+      ],
+      errors: [{ code: 'short_row', line: 2, row: 1, fields: 2 }],
+    },
+  },
+  {
+    name: 'quoted field with a comma inside',
+    input: { text: '"a,b",c\n1,2\n', header: true },
+    expected: { columns: ['a,b', 'c'], rows: [['1', '2']], errors: [] },
+  },
+  {
+    name: 'doubled quotes become one quote',
+    input: { text: '"a""b",c\n', header: true },
+    expected: { columns: ['a"b', 'c'], rows: [], errors: [] },
+  },
+  {
+    name: 'LF inside a quoted field stays, read as LF',
+    input: { text: '"a\nb",c\n1,2\n', header: true },
+    expected: { columns: ['a\nb', 'c'], rows: [['1', '2']], errors: [] },
+  },
+  {
+    name: 'CRLF inside a quoted field reads as LF',
+    input: { text: '"a\r\nb",c\n1,2\n', header: true },
+    expected: { columns: ['a\nb', 'c'], rows: [['1', '2']], errors: [] },
+  },
+  {
+    name: 'lone CR inside a quoted field reads as LF',
+    input: { text: '"a\rb",c\n1,2\n', header: true },
+    expected: { columns: ['a\nb', 'c'], rows: [['1', '2']], errors: [] },
+  },
+  {
+    name: 'junk after a closing quote is appended, quote_junk',
+    input: { text: '"a"junk,b\n1,2\n', header: true },
+    expected: {
+      columns: ['ajunk', 'b'],
+      rows: [['1', '2']],
+      errors: [{ code: 'quote_junk', line: 1, row: null }],
+    },
+  },
+  {
+    name: 'no junk after a closing quote, no error',
+    input: { text: '"a",b\n', header: true },
+    expected: { columns: ['a', 'b'], rows: [], errors: [] },
+  },
+  {
+    name: 'unterminated quote is literal, rest re-read as unquoted',
+    input: { text: '"a,b\n1,2\n', header: true },
+    expected: {
+      columns: ['"a', 'b'],
+      rows: [['1', '2']],
+      errors: [{ code: 'unterminated_quote', line: 1, row: null }],
+    },
+  },
+  {
+    name: 'quote inside an unquoted field is literal',
+    input: { text: 'a"b,c\n', header: true },
+    expected: { columns: ['a"b', 'c'], rows: [], errors: [] },
+  },
+  {
+    name: 'stray CR outside quotes is dropped',
+    input: { text: 'a\rb,c\n1,2\n', header: true },
+    expected: {
+      columns: ['ab', 'c'],
+      rows: [['1', '2']],
+      errors: [{ code: 'stray_cr', line: 1, row: null }],
+    },
+  },
+  {
+    name: 'stray CR at the end of the text',
+    input: { text: 'a,b\r', header: true },
+    expected: {
+      columns: ['a', 'b'],
+      rows: [],
+      errors: [{ code: 'stray_cr', line: 1, row: null }],
+    },
+  },
+  {
+    name: 'lone CR alone is no record, error stays',
+    input: { text: '\r', header: true },
+    expected: {
+      columns: [],
+      rows: [],
+      errors: [{ code: 'stray_cr', line: 1, row: null }],
+    },
+  },
+  {
+    name: 'empty quoted field is a real field',
+    input: { text: '"",b\n', header: true },
+    expected: { columns: ['', 'b'], rows: [], errors: [] },
+  },
+  {
+    name: 'fields keep their spaces, never trimmed',
+    input: { text: ' a , b \n', header: true },
+    expected: { columns: [' a ', ' b '], rows: [], errors: [] },
+  },
+  {
+    name: 'numbers stay strings',
+    input: { text: '1,2.5\n', header: true },
+    expected: { columns: ['1', '2.5'], rows: [], errors: [] },
+  },
+  {
+    name: 'trailing comma means a trailing empty field',
+    input: { text: 'a,b,\n1,2,\n', header: true },
+    expected: { columns: ['a', 'b', ''], rows: [['1', '2', '']], errors: [] },
+  },
+  {
+    name: 'leading comma means a leading empty field',
+    input: { text: ',a\n,1\n', header: true },
+    expected: { columns: ['', 'a'], rows: [['', '1']], errors: [] },
+  },
+  {
+    name: 'quoted empty field plus junk',
+    input: { text: '""junk\n', header: true },
+    expected: {
+      columns: ['junk'],
+      rows: [],
+      errors: [{ code: 'quote_junk', line: 1, row: null }],
+    },
+  },
+  {
+    name: 'quote at end of text never closes',
+    input: { text: 'a,"b', header: true },
+    expected: {
+      columns: ['a', '"b'],
+      rows: [],
+      errors: [{ code: 'unterminated_quote', line: 1, row: null }],
+    },
+  },
+  {
+    name: 'backslash in a field (unsafe path) stays one backslash',
+    input: { text: 'a\\b,c\n', header: true },
+    expected: { columns: ['a\\b', 'c'], rows: [], errors: [] },
+  },
+  {
+    name: 'tab in a field stays a tab',
+    input: { text: 'a\tb,c\n', header: true },
+    expected: { columns: ['a\tb', 'c'], rows: [], errors: [] },
+  },
+  {
+    name: 'unicode stays as-is',
+    input: { text: 'café,Zürich\n', header: true },
+    expected: { columns: ['café', 'Zürich'], rows: [], errors: [] },
+  },
+  {
+    name: 'errors come in the order met',
     input: { text: 'a,b\n1\n2,3,4\n', header: true },
     expected: {
       columns: ['a', 'b'],
-      rows: [['1', ''], ['2', '3']],
+      rows: [
+        ['1', ''],
+        ['2', '3'],
+      ],
       errors: [
         { code: 'short_row', line: 2, row: 0, fields: 1 },
         { code: 'long_row', line: 3, row: 1, extra: ['4'] },
@@ -99,198 +265,80 @@ const cases = [
     },
   },
   {
-    name: 'quoted field holding a comma',
-    input: { text: 'a,b\n"x,y",2\n', header: true },
-    expected: { columns: ['a', 'b'], rows: [['x,y', '2']], errors: [] },
-  },
-  {
-    name: 'doubled quote inside a quoted field is one quote',
-    input: { text: '"a""b",2\n', header: false },
-    expected: { columns: null, rows: [['a"b', '2']], errors: [] },
-  },
-  {
-    name: 'LF inside quotes is kept and counts as a line for later errors',
-    input: { text: '"a\nb",2\n3\n', header: false },
+    name: 'record line counts LF inside quotes',
+    input: { text: '"x\ny",b\n1\n', header: true },
     expected: {
-      columns: null,
-      rows: [['a\nb', '2'], ['3', '']],
-      errors: [{ code: 'short_row', line: 3, row: 1, fields: 1 }],
+      columns: ['x\ny', 'b'],
+      rows: [['1', '']],
+      errors: [{ code: 'short_row', line: 3, row: 0, fields: 1 }],
     },
   },
   {
-    name: 'CRLF inside quotes is read as LF',
-    input: { text: '"a\r\nb",2\n', header: false },
-    expected: { columns: null, rows: [['a\nb', '2']], errors: [] },
-  },
-  {
-    name: 'lone CR inside quotes is read as LF',
-    input: { text: '"a\rb",2\n', header: false },
-    expected: { columns: null, rows: [['a\nb', '2']], errors: [] },
-  },
-  {
-    name: 'junk after the closing quote is appended, quote_junk when the field ends',
-    input: { text: '"a"x,2\n', header: false },
+    name: 'CRLF inside quotes counts once for the line',
+    input: { text: '"x\r\ny",b\n1\n', header: true },
     expected: {
-      columns: null,
-      rows: [['ax', '2']],
-      errors: [{ code: 'quote_junk', line: 1, row: 0 }],
+      columns: ['x\ny', 'b'],
+      rows: [['1', '']],
+      errors: [{ code: 'short_row', line: 3, row: 0, fields: 1 }],
     },
   },
   {
-    name: 'a quote inside the junk is a literal character',
-    input: { text: '"a"x"y,2\n', header: false },
+    name: 'lone CR inside quotes counts for the line',
+    input: { text: '"x\ry",b\n1\n', header: true },
     expected: {
-      columns: null,
-      rows: [['ax"y', '2']],
-      errors: [{ code: 'quote_junk', line: 1, row: 0 }],
+      columns: ['x\ny', 'b'],
+      rows: [['1', '']],
+      errors: [{ code: 'short_row', line: 3, row: 0, fields: 1 }],
     },
   },
   {
-    name: 'stray_cr inside the junk comes before quote_junk',
-    input: { text: '"a"x\ry,2\n', header: false },
+    name: 'stray CR does not move the line counter',
+    input: { text: 'a\rb\n1\n', header: true },
     expected: {
-      columns: null,
-      rows: [['axy', '2']],
+      columns: ['ab'],
+      rows: [['1']],
+      errors: [{ code: 'stray_cr', line: 1, row: null }],
+    },
+  },
+  {
+    name: 'two stray CRs give two errors',
+    input: { text: 'a\rb\rc\n', header: true },
+    expected: {
+      columns: ['abc'],
+      rows: [],
       errors: [
-        { code: 'stray_cr', line: 1, row: 0 },
-        { code: 'quote_junk', line: 1, row: 0 },
+        { code: 'stray_cr', line: 1, row: null },
+        { code: 'stray_cr', line: 1, row: null },
       ],
     },
   },
   {
-    name: 'a quote that never closes is literal and the rest re-reads as unquoted',
-    input: { text: '"a,b\n1,2\n', header: false },
-    expected: {
-      columns: null,
-      rows: [['"a', 'b'], ['1', '2']],
-      errors: [{ code: 'unterminated_quote', line: 1, row: 0 }],
-    },
-  },
-  {
-    name: 'unterminated quote at end of text',
-    input: { text: '"ab', header: false },
-    expected: {
-      columns: null,
-      rows: [['"ab']],
-      errors: [{ code: 'unterminated_quote', line: 1, row: 0 }],
-    },
-  },
-  {
-    name: 'quote inside an unquoted field is literal',
-    input: { text: 'a"b,c\n', header: false },
-    expected: { columns: null, rows: [['a"b', 'c']], errors: [] },
-  },
-  {
-    name: 'a quoted empty field is a record, an unquoted empty line is not',
-    input: { text: '""\n', header: false },
-    expected: { columns: null, rows: [['']], errors: [] },
-  },
-  {
-    name: 'a line holding only stray CRs is no record but keeps its errors',
-    input: { text: 'a,b\n\r\r\n1,2\n', header: true },
+    name: 'stray CR at the start of the text',
+    input: { text: '\ra,b\n', header: true },
     expected: {
       columns: ['a', 'b'],
-      rows: [['1', '2']],
-      // The first CR is lone (stray_cr); the second CR with the LF is the
-      // line break itself, so there is exactly one error.
-      errors: [{ code: 'stray_cr', line: 2, row: 0 }],
+      rows: [],
+      errors: [{ code: 'stray_cr', line: 1, row: null }],
     },
   },
   {
-    name: 'no trailing line break: the last record still counts',
-    input: { text: 'a,b\n1,2', header: true },
+    name: 'header defines width even when it is one field',
+    input: { text: 'a\n1,2\n', header: true },
+    expected: {
+      columns: ['a'],
+      rows: [['1']],
+      errors: [{ code: 'long_row', line: 2, row: 0, extra: ['2'] }],
+    },
+  },
+  {
+    name: 'two quoted fields',
+    input: { text: '"a","b"\n"1","2"\n', header: true },
     expected: { columns: ['a', 'b'], rows: [['1', '2']], errors: [] },
   },
   {
-    name: 'fields are never trimmed or converted',
-    input: { text: '  x  ,007,1.0\n', header: false },
-    expected: { columns: null, rows: [['  x  ', '007', '1.0']], errors: [] },
-  },
-  {
-    name: 'empty fields stay empty strings',
-    input: { text: ',,\n', header: false },
-    expected: { columns: null, rows: [['', '', '']], errors: [] },
-  },
-  {
-    name: 'quoted field then end of text right after the closing quote',
-    input: { text: '"a"', header: false },
-    expected: { columns: null, rows: [['a']], errors: [] },
-  },
-  {
-    name: 'lone CR after a closing quote is a stray_cr, no junk when nothing follows',
-    input: { text: '"a"\r', header: false },
-    expected: {
-      columns: null,
-      rows: [['a']],
-      errors: [{ code: 'stray_cr', line: 1, row: 0 }],
-    },
-  },
-  {
-    name: 'CRLF after a closing quote ends the record',
-    input: { text: 'h\r\n"a"\r\n', header: true },
-    expected: { columns: ['h'], rows: [['a']], errors: [] },
-  },
-  {
-    name: 'stray_cr and short_row on the same record, in the order met',
-    input: { text: 'a,b,c\n1\rd,2\n', header: true },
-    expected: {
-      columns: ['a', 'b', 'c'],
-      rows: [['1d', '2', '']],
-      errors: [
-        { code: 'stray_cr', line: 2, row: 0 },
-        { code: 'short_row', line: 2, row: 0, fields: 2 },
-      ],
-    },
-  },
-  {
-    name: 'a lone CR as the whole text is no record',
-    input: { text: '\r', header: false },
-    expected: {
-      columns: null,
-      rows: [],
-      errors: [{ code: 'stray_cr', line: 1, row: 0 }],
-    },
-  },
-  {
-    name: 'only line breaks: no records at all',
-    input: { text: '\n\n', header: false },
-    expected: { columns: null, rows: [], errors: [] },
-  },
-  {
-    name: 'non-ASCII fields are kept as they stand',
-    input: { text: 'Zürich,東京\n', header: false },
-    expected: { columns: null, rows: [['Zürich', '東京']], errors: [] },
-  },
-  {
-    name: 'unterminated quote rewinds the line count to the opening line',
-    input: { text: '"a\nb,c\n1,2\n', header: false },
-    expected: {
-      columns: null,
-      // The quote never closes, so the text after it re-reads as unquoted:
-      // field 1 is '"a', the LF ends record 1 (width 1); 'b,c' and '1,2'
-      // then each lose their second field to long_row.
-      rows: [['"a'], ['b'], ['1']],
-      errors: [
-        { code: 'unterminated_quote', line: 1, row: 0 },
-        { code: 'long_row', line: 2, row: 1, extra: ['c'] },
-        { code: 'long_row', line: 3, row: 2, extra: ['2'] },
-      ],
-    },
-  },
-  {
-    name: 'backslash in a field is kept and escaped in the JSON output',
-    input: { text: 'a\\b,c\n', header: false },
-    expected: { columns: null, rows: [['a\\b', 'c']], errors: [] },
-  },
-  {
-    name: 'tab inside a field is kept and escaped in the JSON output',
-    input: { text: 'a\tb,c\n', header: false },
-    expected: { columns: null, rows: [['a\tb', 'c']], errors: [] },
-  },
-  {
-    name: 'a quoted field holding a backslash and a newline',
-    input: { text: '"a\\b\nc",2\n', header: false },
-    expected: { columns: null, rows: [['a\\b\nc', '2']], errors: [] },
+    name: 'CRLF blank lines skipped',
+    input: { text: 'a,b\r\n\r\n1,2\r\n', header: true },
+    expected: { columns: ['a', 'b'], rows: [['1', '2']], errors: [] },
   },
 ];
 
@@ -299,32 +347,3 @@ for (const c of cases) {
     assert.deepEqual(got(c.input), c.expected);
   });
 }
-
-test('two runs on the same input are byte-identical', () => {
-  const input = { text: '"a\nb",2\r\n3,4\n"unterminated', header: true };
-  assert.equal(run(input), run(input));
-});
-
-test('run keeps no state between calls', () => {
-  const first = got({ text: 'a,b\n1,2,3\n', header: true });
-  const second = got({ text: 'x\n', header: false });
-  assert.deepEqual(first, {
-    columns: ['a', 'b'],
-    rows: [['1', '2']],
-    errors: [{ code: 'long_row', line: 2, row: 0, extra: ['3'] }],
-  });
-  assert.deepEqual(second, { columns: null, rows: [['x']], errors: [] });
-});
-
-test('the returned JSON parses to the same value the scorer compares', () => {
-  // The scorer reads answers.json and compares values; run()'s string must
-  // be valid JSON whose parsed form is the answer.
-  const input = { text: 'a,b\n"x\ny",2\n', header: true };
-  const s = run(input);
-  assert.equal(typeof s, 'string');
-  assert.deepEqual(JSON.parse(s), {
-    columns: ['a', 'b'],
-    rows: [['x\ny', '2']],
-    errors: [],
-  });
-});

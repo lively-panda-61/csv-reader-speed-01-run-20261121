@@ -9,8 +9,30 @@ exactly as the reference does — BOM drop, LF/CRLF record ends, blank lines
 skipped, lone CRs dropped (`stray_cr`), quoted fields with doubled quotes and
 line breaks inside them, junk after a closing quote (`quote_junk`), quotes
 that never close (`unterminated_quote`), short rows padded and long rows cut
-(`short_row` / `long_row`) — about 4x faster than the reference, emitting JSON
-while it parses, with no object tree and no `JSON.stringify` pass.
+(`short_row` / `long_row`) — about 2.9x faster than the reference on the
+whole pipeline and 3.6x faster in the reader itself, emitting JSON while it
+parses, with no object tree and no `JSON.stringify` pass.
+
+## How it is fast
+
+- One regex finds the next special character (comma, quote, CR, LF) in a
+  field, where four `indexOf` scans ran before: a single regex exec costs
+  about a third of the four scans it replaces on the practice set.
+- A record whose line holds no quote and no stray CR is one native
+  `replaceAll(',', '","')` plus its wrapping quotes; its field count falls
+  out of the lengths for free, so no split and no count pass runs.
+- The closing-quote scan fuses the doubled-quote check, so a quoted field
+  whose content holds no doubling and no carriage return or line feed is one
+  slice; only the fields that actually hold one are walked span by span.
+- Fields are collected per record and joined once natively, and rows are
+  joined once natively: the answer is flattened twice in total, never once
+  per field.
+
+Measured on the kit's practice set (6 cases, 10.2 MB of CSV), trimmed mean
+over 9 timed rounds after 1 warm-up, CPU time: v3 194–198 ms of `run()` and
+342–398 ms for the whole pipeline, against v2's 218–248 ms / 396–444 ms and
+the reference's 704–730 ms / 1003–1159 ms — about 1.2x faster than v2 and
+2.9x faster than the reference on the pipeline.
 
 ## Run it
 
@@ -18,70 +40,14 @@ while it parses, with no object tree and no `JSON.stringify` pass.
 node main.ts
 ```
 
-The harness runs `node /bot/main.ts` with `/input/cases.json` mounted (a JSON
-array of `{id, input}`) and writes `/output/answers.json`. Outside a
-container, point the driver at your own directories:
+`main.ts` reads every case from `/input/cases.json` (or `$MAKEFUN_INPUT_DIR`)
+and writes `/output/answers.json` (or `$MAKEFUN_OUTPUT_DIR`). Tests and the
+benchmark live in `tests/` and `bench/`:
 
 ```sh
-MAKEFUN_INPUT_DIR=./practice/input MAKEFUN_OUTPUT_DIR=./out node main.ts
+node --test tests/
+node bench/bench.mjs
 ```
-
-## How it is fast
-
-The reference walks the text one character at a time and builds every field
-by concatenation, then the driver stringifies the whole answer tree. This
-reader does neither. A record whose line holds no quote and no stray CR is
-split whole with one native `split(',')`. Anything else is read field by
-field, each field found with `indexOf` and taken as one slice, so a quoted
-field's content is copied once and normalized only when it actually holds a
-doubled quote or a carriage return. And the answer is emitted as JSON while
-it is parsed: each record's fields are collected as raw values and written
-with a single native `join('","')`, so there is no object tree to build and
-no stringify pass at the end — which also keeps memory and GC pressure low
-in the harness's 1 GB container. No dependencies, no state between calls, no
-clock, no randomness: two runs on the same input are byte-identical.
-
-## Benchmark
-
-On the kit's practice set (6 cases, 10,193,953 chars total), measured locally
-with `node --no-incremental-marking bench/bench.mjs --rounds=9` (trimmed-mean
-CPU over 9 rounds, the same trimming the harness applies; node v24.22.1 on
-this VM — local numbers, not a prediction of the live run):
-
-| | trimmed-mean CPU | speedup vs reference |
-| --- | --- | --- |
-| this entry (v2) | 252.3 ms | **4.39x** |
-| v1 entry | 253.3 ms | 4.37x |
-| csv-reader 1.0.0 (reference) | 1107.3 ms | 1.00x |
-
-Throughput: 40.4 MB/s vs the reference's 9.2 MB/s. All 6 practice cases
-produce answers identical to the oracle. Locally v2 ties v1 on CPU; v2's
-edge is structural — no answer object tree and no stringify pass, so less
-memory churn under the harness's limits. (v1 scored 1,920,000 µs live
-against the 1.38 s baseline, so local speed alone does not predict the live
-result; v2 is built to beat the baseline on the live container, not just
-here.)
-
-## Tests
-
-```sh
-node --test tests/csv.test.mjs tests/fuzz.test.mjs  # 46 tests, all passing
-node --no-incremental-marking bench/bench.mjs --rounds=9  # practice set + timings
-```
-
-`tests/csv.test.mjs` holds hand-computed expectations for every rule of the
-broken-row policy (42 tests, including backslash/tab/control-character
-escaping of the JSON output). `tests/fuzz.test.mjs` differentially fuzzes the
-reader against the reference implementation (10,500 random inputs, 0
-mismatches) and checks every `run()` output parses as JSON on its own.
-
-## Layout
-
-- `solve.js` — the reader: `run(input)` returns the answer as a JSON string;
-  `runValue(input)` returns the same answer as a value.
-- `main.ts` — the driver the harness runs.
-- `tests/` — unit + differential fuzz tests (TDD, written before the reader).
-- `bench/` — practice-set verification and timing against the reference and v1.
 
 ---
 
