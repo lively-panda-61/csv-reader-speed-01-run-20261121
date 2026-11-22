@@ -1,15 +1,22 @@
 // Unit tests for solve.js run(input) — expectations hand-computed from the
-// csv-reader 1.0.0 policy written in the competition rules (competition.yaml):
-// BOM drop, LF/CRLF record ends, blank lines are no records, lone CR outside
-// quotes is dropped (stray_cr), quoted fields, doubled quotes, CR/CRLF inside
-// quotes read as LF, junk after a closing quote (quote_junk), a quote that
-// never closes is literal and the rest re-reads as unquoted
-// (unterminated_quote), quotes inside unquoted fields are literal, fields
-// stay strings, short_row pads / long_row cuts to the first record's width,
-// errors are {code, line, row} in the order met.
+// csv-reader 1.0.0 policy (competition.yaml / RULES.txt): BOM drop, LF/CRLF
+// record ends, blank lines are no records, lone CR outside quotes is dropped
+// (stray_cr), quoted fields, doubled quotes, CR/CRLF inside quotes read as
+// LF, junk after a closing quote (quote_junk), a quote that never closes is
+// literal and the rest re-reads as unquoted (unterminated_quote), quotes
+// inside unquoted fields are literal, fields stay strings, short_row pads /
+// long_row cuts to the first record's width, errors are {code, line, row} in
+// the order met.
+//
+// run() returns the answer as a JSON string (the entry emits JSON while it
+// parses, so no separate stringify pass runs); the tests parse it back and
+// compare values, exactly as the scorer does.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { run } from '../solve.js';
+
+/** The answer value of one case, parsed back from run()'s JSON string. */
+const got = (input) => JSON.parse(run(input));
 
 const cases = [
   {
@@ -270,26 +277,54 @@ const cases = [
       ],
     },
   },
+  {
+    name: 'backslash in a field is kept and escaped in the JSON output',
+    input: { text: 'a\\b,c\n', header: false },
+    expected: { columns: null, rows: [['a\\b', 'c']], errors: [] },
+  },
+  {
+    name: 'tab inside a field is kept and escaped in the JSON output',
+    input: { text: 'a\tb,c\n', header: false },
+    expected: { columns: null, rows: [['a\tb', 'c']], errors: [] },
+  },
+  {
+    name: 'a quoted field holding a backslash and a newline',
+    input: { text: '"a\\b\nc",2\n', header: false },
+    expected: { columns: null, rows: [['a\\b\nc', '2']], errors: [] },
+  },
 ];
 
 for (const c of cases) {
   test(c.name, () => {
-    assert.deepEqual(run(c.input), c.expected);
+    assert.deepEqual(got(c.input), c.expected);
   });
 }
 
 test('two runs on the same input are byte-identical', () => {
   const input = { text: '"a\nb",2\r\n3,4\n"unterminated', header: true };
-  assert.equal(JSON.stringify(run(input)), JSON.stringify(run(input)));
+  assert.equal(run(input), run(input));
 });
 
 test('run keeps no state between calls', () => {
-  const first = run({ text: 'a,b\n1,2,3\n', header: true });
-  const second = run({ text: 'x\n', header: false });
+  const first = got({ text: 'a,b\n1,2,3\n', header: true });
+  const second = got({ text: 'x\n', header: false });
   assert.deepEqual(first, {
     columns: ['a', 'b'],
     rows: [['1', '2']],
     errors: [{ code: 'long_row', line: 2, row: 0, extra: ['3'] }],
   });
   assert.deepEqual(second, { columns: null, rows: [['x']], errors: [] });
+});
+
+test('the returned JSON parses to the same value the scorer compares', () => {
+  // The scorer reads answers.json and compares values; run()'s string must
+  // be valid JSON whose parsed form is the answer.
+  const input = { text: 'a,b\n"x\ny",2\n', header: true };
+  const s = run(input);
+  assert.equal(typeof s, 'string');
+  assert.deepEqual(JSON.parse(s), {
+    columns: ['a', 'b'],
+    rows: [['x\ny', '2']],
+    errors: [],
+  });
 });

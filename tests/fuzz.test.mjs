@@ -1,7 +1,9 @@
 // Differential fuzz test: random CSV-ish inputs must read exactly as the
 // reference csv-reader 1.0.0 reads them. The reference is imported from the
 // kit (dev-only: it is NOT part of the entry, and no kit file is copied into
-// the repository). Run with: node --test tests/fuzz.test.mjs
+// the repository). run() returns the answer as a JSON string; the test parses
+// it back and compares values, exactly as the scorer does. Run with:
+// node --test tests/fuzz.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -25,6 +27,9 @@ function canonical(v) {
   return JSON.stringify(v) ?? 'null';
 }
 
+/** The answer value of one case, parsed back from run()'s JSON string. */
+const got = (input) => JSON.parse(run(input));
+
 // Deterministic PRNG (mulberry32) so failures reproduce.
 function rng(seed) {
   let a = seed >>> 0;
@@ -41,6 +46,7 @@ const PIECES = [
   'a', 'b', 'ab', 'x', '1', '007', ' ', '  ', 'café', 'Zürich', '',
   ',', '"', '""', '"a"', '\n', '\r', '\r\n', 'x"y', '"a', 'a"', 'kg', '!',
   '\uFEFF', 'a,b', '"a,b"', '"a\nb"', '"a\rb"', '"a\r\nb"', 'a\rb', 'a\rb\n',
+  'a\\b', 'a\tb', '\\', '\t', 'x\\', '"\\"', 'back\\slash',
 ];
 
 function randomText(r, maxPieces) {
@@ -59,7 +65,7 @@ function randomStructured(r) {
     const fields = [];
     const n = Math.max(0, width + Math.floor(r() * 3) - 1);
     for (let j = 0; j < n; j++) {
-      const v = PIECES[Math.floor(r() * 8)];
+      const v = PIECES[Math.floor(r() * 10)];
       const style = r();
       if (style < 0.3) fields.push(`"${v.replaceAll('"', '""')}"`);
       else if (style < 0.35) fields.push(`"${v}"junk`);
@@ -77,13 +83,13 @@ function randomStructured(r) {
 }
 
 test('fuzz: random token soup matches the reference', () => {
-  const r = rng(20261121);
-  for (let i = 0; i < 2500; i++) {
+  const r = rng(20261122);
+  for (let i = 0; i < 5000; i++) {
     const text = randomText(r, 40);
     const header = r() < 0.5;
     const input = { text, header };
     assert.equal(
-      canonical(run(input)),
+      canonical(got(input)),
       canonical(readCsv(input)),
       `mismatch on case ${i}: ${JSON.stringify(input)}`,
     );
@@ -91,13 +97,13 @@ test('fuzz: random token soup matches the reference', () => {
 });
 
 test('fuzz: random structured records match the reference', () => {
-  const r = rng(777);
-  for (let i = 0; i < 1500; i++) {
+  const r = rng(31337);
+  for (let i = 0; i < 4000; i++) {
     const text = randomStructured(r);
     const header = r() < 0.5;
     const input = { text, header };
     assert.equal(
-      canonical(run(input)),
+      canonical(got(input)),
       canonical(readCsv(input)),
       `mismatch on structured case ${i}: ${JSON.stringify(input)}`,
     );
@@ -105,15 +111,26 @@ test('fuzz: random structured records match the reference', () => {
 });
 
 test('fuzz: long token soup matches the reference', () => {
-  const r = rng(4242);
-  for (let i = 0; i < 200; i++) {
+  const r = rng(90210);
+  for (let i = 0; i < 500; i++) {
     const text = randomText(r, 600);
     const header = r() < 0.5;
     const input = { text, header };
     assert.equal(
-      canonical(run(input)),
+      canonical(got(input)),
       canonical(readCsv(input)),
       `mismatch on long case ${i}`,
     );
+  }
+});
+
+test('fuzz: every run() output is valid JSON on its own', () => {
+  // The entry's answers.json is built from run()'s strings; each one must
+  // parse, so a bad escape can never corrupt the whole file.
+  const r = rng(555);
+  for (let i = 0; i < 1000; i++) {
+    const text = randomText(r, 60);
+    const s = run({ text, header: r() < 0.5 });
+    assert.doesNotThrow(() => JSON.parse(s), `run() returned invalid JSON on case ${i}: ${s.slice(0, 200)}`);
   }
 });

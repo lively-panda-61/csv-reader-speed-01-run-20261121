@@ -4,6 +4,10 @@
 // /output/answers.json: a JSON array of the answers, one per case and in the
 // cases' order. Outside a container MAKEFUN_INPUT_DIR and MAKEFUN_OUTPUT_DIR
 // stand in for /input and /output.
+//
+// run() returns each answer already as a JSON string (solve.js emits JSON
+// while it parses, so there is no object tree and no JSON.stringify pass):
+// the answers are joined into the array directly.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -16,7 +20,7 @@ setFlagsFromString('--no-incremental-marking');
 
 /** solve.js, imported by its URL (a .js module carries no types) and typed by its contract. */
 const { run } = (await import(new URL('./solve.js', import.meta.url).href)) as {
-  run: (input: unknown) => unknown;
+  run: (input: unknown) => string;
 };
 
 const INPUT_DIR = process.env.MAKEFUN_INPUT_DIR ?? '/input';
@@ -27,7 +31,7 @@ const cases = JSON.parse(readFileSync(join(INPUT_DIR, 'cases.json'), 'utf8')) as
   id: string;
   input: unknown;
 }[];
-const answers: unknown[] = [];
+const answers: string[] = [];
 let chars = 0;
 for (const c of cases) {
   answers.push(run(c.input));
@@ -35,7 +39,7 @@ for (const c of cases) {
   if (typeof text === 'string') chars += text.length;
 }
 const outFile = join(OUTPUT_DIR, 'answers.json');
-writeFileSync(outFile, JSON.stringify(answers));
+writeFileSync(outFile, '[' + answers.join(',') + ']');
 console.log(
   `[csv-reader-speed] ${cases.length} cases, ${chars.toLocaleString('en-US')} chars read, ` +
     `answers written to ${outFile} in ${Date.now() - started} ms`,
